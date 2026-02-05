@@ -1,0 +1,46 @@
+export const API_BASE_URL = "https://www.polaraccesslink.com";
+export const OAUTH_BASE_URL = "https://flow.polar.com";
+export const OAUTH_TOKEN_URL = "https://polarremote.com/v2/oauth2/token";
+export const API_VERSION = "v3";
+
+export const ENDPOINTS = {
+  // User management
+  USERS: "/v3/users",
+  USER: (userId: string) => `/v3/users/${userId}`,
+
+  // Exercises
+  EXERCISES: "/v3/exercises",
+  EXERCISE: (exerciseId: string) => `/v3/exercises/${exerciseId}`,
+  EXERCISE_FIT: (exerciseId: string) => `/v3/exercises/${exerciseId}/fit`,
+  EXERCISE_TCX: (exerciseId: string) => `/v3/exercises/${exerciseId}/tcx`,
+  EXERCISE_GPX: (exerciseId: string) => `/v3/exercises/${exerciseId}/gpx`,
+
+  // Daily Activity
+  ACTIVITIES: "/v3/users/activities",
+  ACTIVITY: (date: string) => `/v3/users/activities/${date}`,
+  ACTIVITY_SAMPLES: "/v3/users/activities/samples",
+  ACTIVITY_SAMPLES_DATE: (date: string) => `/v3/users/activities/samples/${date}`,
+
+  // Physical Information
+  PHYSICAL_INFO: "/v3/users/physical-info",
+  PHYSICAL_INFO_ID: (id: string) => `/v3/users/physical-info/${id}`,
+
+  // Continuous Heart Rate
+  HEART_RATE: "/v3/users/continuous-heart-rate",
+  HEART_RATE_DATE: (date: string) => `/v3/users/continuous-heart-rate/${date}`,
+
+  // Sleep
+  SLEEP: "/v3/users/sleep",
+  SLEEP_NIGHT: (nightId: string) => `/v3/users/sleep/${nightId}`,
+
+  // Nightly Recharge
+  NIGHTLY_RECHARGE: "/v3/users/nightly-recharge",
+  NIGHTLY_RECHARGE_NIGHT: (nightId: string) => `/v3/users/nightly-recharge/${nightId}`,
+} as const;
+
+export const DEFAULT_TIMEOUT = 30000; // 30 seconds
+export const DEFAULT_LIMIT = 20;
+export const MAX_LIMIT = 100;
+export const MIN_LIMIT = 1;
+
+export const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;

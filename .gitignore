@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment variables (contains secrets)
+.env
+.env.*
+
+# Claude Code
+.claude/
+CLAUDE.md
+context7_helper.md
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
