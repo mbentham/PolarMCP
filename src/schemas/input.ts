@@ -33,10 +33,6 @@ export const getUserSchema = z.object({
   format: formatSchema,
 }).strict();
 
-export const deleteUserSchema = z.object({
-  format: formatSchema,
-}).strict();
-
 // Exercise tool schemas
 export const getExercisesBaseSchema = baseInputSchema.extend({
   from: optionalDateSchema.describe("Start date (YYYY-MM-DD). If omitted, returns last 30 days."),
@@ -58,11 +54,6 @@ export const getActivitiesSchema = z.object({
 
 // Physical info tool schemas
 export const listPhysicalInfoSchema = baseInputSchema.extend({}).strict();
-
-export const getPhysicalInfoSchema = z.object({
-  physicalInfoId: z.string().min(1).describe("The physical info entry ID"),
-  format: formatSchema,
-}).strict();
 
 // Heart rate tool schemas
 export const getHeartRateSchema = z.object({
@@ -115,7 +106,6 @@ export const schemas = {
   // Users
   registerUser: registerUserSchema,
   getUser: getUserSchema,
-  deleteUser: deleteUserSchema,
   // Exercises
   getExercises: getExercisesBaseSchema,
   downloadExercise: downloadExerciseSchema,
@@ -123,7 +113,6 @@ export const schemas = {
   getActivities: getActivitiesSchema,
   // Physical info
   listPhysicalInfo: listPhysicalInfoSchema,
-  getPhysicalInfo: getPhysicalInfoSchema,
   // Heart rate
   getHeartRate: getHeartRateSchema,
   // Sleep

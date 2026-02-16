@@ -57,18 +57,6 @@ export async function getUser(input: z.infer<typeof schemas.getUser>): Promise<s
   return formatResponse(result, input.format, formatUserMarkdown);
 }
 
-export async function deleteUser(input: z.infer<typeof schemas.deleteUser>): Promise<string> {
-  const client = getApiClient();
-  const userId = client.getUserId();
-
-  await client.delete(ENDPOINTS.USER(userId));
-
-  if (input.format === "json") {
-    return JSON.stringify({ success: true, message: "User deleted successfully" }, null, 2);
-  }
-  return "## User Deleted\n\nUser registration has been successfully deleted.";
-}
-
 export const userTools = {
   polar_register_user: {
     name: "polar_register_user",
@@ -92,19 +80,6 @@ export const userTools = {
       title: "Get User",
       readOnlyHint: true,
       destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  polar_delete_user: {
-    name: "polar_delete_user",
-    description: "Delete the user registration from Polar AccessLink. This removes the link between your application and the Polar user.",
-    inputSchema: schemas.deleteUser,
-    handler: deleteUser,
-    annotations: {
-      title: "Delete User",
-      readOnlyHint: false,
-      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },

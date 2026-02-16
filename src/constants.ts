@@ -21,9 +21,10 @@ export const ENDPOINTS = {
   ACTIVITY_SAMPLES: "/v3/users/activities/samples",
   ACTIVITY_SAMPLES_DATE: (date: string) => `/v3/users/activities/samples/${date}`,
 
-  // Physical Information
-  PHYSICAL_INFO: "/v3/users/physical-info",
-  PHYSICAL_INFO_ID: (id: string) => `/v3/users/physical-info/${id}`,
+  // Physical Information (transactional)
+  PHYSICAL_INFO_TRANSACTIONS: (userId: string) => `/v3/users/${userId}/physical-information-transactions`,
+  PHYSICAL_INFO_TRANSACTION: (userId: string, txnId: string) => `/v3/users/${userId}/physical-information-transactions/${txnId}`,
+  PHYSICAL_INFO_ENTITY: (userId: string, txnId: string, infoId: string) => `/v3/users/${userId}/physical-information-transactions/${txnId}/physical-informations/${infoId}`,
 
   // Continuous Heart Rate
   HEART_RATE: "/v3/users/continuous-heart-rate",

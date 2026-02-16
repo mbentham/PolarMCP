@@ -228,18 +228,24 @@ export interface PhysicalInfo {
   "transaction-id"?: number;
   created: string;
   weight?: number;
+  "weight-source"?: string;
   height?: number;
   "maximum-heart-rate"?: number;
   "resting-heart-rate"?: number;
   "aerobic-threshold"?: number;
   "anaerobic-threshold"?: number;
-  vo2max?: number;
+  "vo2-max"?: number;
   "body-mass-index"?: number;
   "fat-percent"?: number;
 }
 
-export interface PhysicalInfoList {
-  "physical-informations": PhysicalInfo[];
+export interface TransactionLocation {
+  "transaction-id": number;
+  "resource-uri": string;
+}
+
+export interface PhysicalInfoUrlList {
+  "physical-informations": string[];
 }
 
 // Continuous Heart Rate types (Pull Notifications API uses snake_case)

@@ -4,7 +4,8 @@ import { ENDPOINTS } from "../constants.js";
 import { schemas } from "../schemas/input.js";
 import type {
   PhysicalInfo,
-  PhysicalInfoList,
+  TransactionLocation,
+  PhysicalInfoUrlList,
   ContinuousHeartRateList,
   HeartRateSample,
   HalfHourBucket,
@@ -41,10 +42,11 @@ function formatPhysicalInfoMarkdown(info: PhysicalInfo): string {
   ];
 
   if (info.weight) lines.push(`- **Weight**: ${info.weight} kg`);
+  if (info["weight-source"]) lines.push(`- **Weight Source**: ${info["weight-source"]}`);
   if (info.height) lines.push(`- **Height**: ${info.height} cm`);
   if (info["maximum-heart-rate"]) lines.push(`- **Max Heart Rate**: ${info["maximum-heart-rate"]} bpm`);
   if (info["resting-heart-rate"]) lines.push(`- **Resting Heart Rate**: ${info["resting-heart-rate"]} bpm`);
-  if (info.vo2max) lines.push(`- **VO2 Max**: ${info.vo2max}`);
+  if (info["vo2-max"]) lines.push(`- **VO2 Max**: ${info["vo2-max"]}`);
   if (info["aerobic-threshold"]) lines.push(`- **Aerobic Threshold**: ${info["aerobic-threshold"]} bpm`);
   if (info["anaerobic-threshold"]) lines.push(`- **Anaerobic Threshold**: ${info["anaerobic-threshold"]} bpm`);
   if (info["body-mass-index"]) lines.push(`- **BMI**: ${info["body-mass-index"]}`);
@@ -53,19 +55,19 @@ function formatPhysicalInfoMarkdown(info: PhysicalInfo): string {
   return lines.join("\n");
 }
 
-function formatPhysicalInfoListMarkdown(data: PhysicalInfoList): string {
-  if (!data["physical-informations"] || data["physical-informations"].length === 0) {
+function formatPhysicalInfoListMarkdown(data: PhysicalInfo[]): string {
+  if (data.length === 0) {
     return "## Physical Information\n\nNo physical information records found.";
   }
 
   const lines = [
     "## Physical Information",
     "",
-    `Found ${data["physical-informations"].length} record(s):`,
+    `Found ${data.length} record(s):`,
     "",
   ];
 
-  for (const info of data["physical-informations"]) {
+  for (const info of data) {
     lines.push(formatPhysicalInfoMarkdown(info));
     lines.push("");
   }
@@ -473,23 +475,45 @@ function formatProcessedRechargeMarkdown(data: ProcessedNightlyRecharge[]): stri
   return lines.join("\n");
 }
 
-// Physical Info handlers
+// Physical Info handler (transactional pull-notification flow)
 export async function listPhysicalInfo(input: z.infer<typeof schemas.listPhysicalInfo>): Promise<string> {
   const client = getApiClient();
+  const userId = client.getUserId();
 
-  const result = await client.get<PhysicalInfoList>(ENDPOINTS.PHYSICAL_INFO);
+  // 1. Create transaction (201 = new data, 204 = no new data)
+  const txnLocation = await client.post<TransactionLocation>(
+    ENDPOINTS.PHYSICAL_INFO_TRANSACTIONS(userId)
+  );
 
-  return formatResponse(result, input.format, formatPhysicalInfoListMarkdown);
-}
+  // 204 No Content returns empty/undefined body
+  if (!txnLocation || !txnLocation["transaction-id"]) {
+    return formatResponse([] as PhysicalInfo[], input.format, formatPhysicalInfoListMarkdown);
+  }
 
-export async function getPhysicalInfo(input: z.infer<typeof schemas.getPhysicalInfo>): Promise<string> {
-  const client = getApiClient();
+  const txnId = String(txnLocation["transaction-id"]);
 
-  const result = await client.get<PhysicalInfo>(ENDPOINTS.PHYSICAL_INFO_ID(input.physicalInfoId));
+  // 2. List physical info URLs in this transaction
+  const urlList = await client.get<PhysicalInfoUrlList>(
+    ENDPOINTS.PHYSICAL_INFO_TRANSACTION(userId, txnId)
+  );
 
-  return formatResponse(result, input.format, (data) => {
-    return "## Physical Info Details\n\n" + formatPhysicalInfoMarkdown(data);
-  });
+  const urls = urlList["physical-informations"] || [];
+
+  // 3. Fetch each individual record (extract info ID from URL)
+  const records: PhysicalInfo[] = [];
+  for (const url of urls) {
+    const parts = url.split("/");
+    const infoId = parts[parts.length - 1];
+    const record = await client.get<PhysicalInfo>(
+      ENDPOINTS.PHYSICAL_INFO_ENTITY(userId, txnId, infoId)
+    );
+    records.push(record);
+  }
+
+  // Transaction is intentionally NOT committed so data remains
+  // available for future pulls (Polar auto-expires uncommitted transactions)
+
+  return formatResponse(records, input.format, formatPhysicalInfoListMarkdown);
 }
 
 // Heart Rate handler
@@ -596,19 +620,6 @@ export const physicalInfoTools = {
     handler: listPhysicalInfo,
     annotations: {
       title: "List Physical Info",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  polar_get_physical_info: {
-    name: "polar_get_physical_info",
-    description: "Get detailed physical information for a specific entry including body metrics and fitness data.",
-    inputSchema: schemas.getPhysicalInfo,
-    handler: getPhysicalInfo,
-    annotations: {
-      title: "Get Physical Info",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

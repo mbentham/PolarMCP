@@ -157,17 +157,6 @@ export class PolarApiClient {
     }
   }
 
-  async delete(endpoint: string): Promise<void> {
-    try {
-      await this.withRetry(async () => {
-        await this.client.delete(endpoint);
-      }, `DELETE ${endpoint}`);
-    } catch (error) {
-      const apiError = this.handleError(error as AxiosError);
-      throw new Error(`${apiError.message}${apiError.details ? ` - ${apiError.details}` : ""}`);
-    }
-  }
-
   async getBinary(endpoint: string): Promise<Buffer> {
     try {
       return await this.withRetry(async () => {
