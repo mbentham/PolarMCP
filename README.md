@@ -1,4 +1,4 @@
-# Polar AccessLink MCP Server
+# Polar Fitness MCP Server
 
 **An MCP server that turns raw Polar device data into AI-ready fitness insights. Exercise samples, heart rate streams, sleep hypnograms, and recovery metrics are preprocessed into compact summaries — so an AI assistant can analyse days of health data without blowing its context window.**
 
