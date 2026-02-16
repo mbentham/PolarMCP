@@ -1,6 +1,6 @@
 # Polar AccessLink MCP Server
 
-**An MCP server that gives AI assistants access to Polar fitness and health data via the Polar AccessLink API v3. Query exercise data, daily activity, sleep patterns, heart rate, recovery metrics, and more from Polar devices and watches.**
+**An MCP server that turns raw Polar device data into AI-ready fitness insights. Exercise samples, heart rate streams, sleep hypnograms, and recovery metrics are preprocessed into compact summaries — so an AI assistant can analyse days of health data without blowing its context window.**
 
 ## Quick Start
 
@@ -56,6 +56,24 @@ npm run build
 - **SleepWise alertness** — hourly alertness predictions based on sleep quality
 - **Exercise downloads** — export workouts in FIT, TCX, or GPX format
 - **Dual output** — all tools support `markdown` (human-readable) or `json` (structured) response formats
+
+## Why Preprocessing Matters
+
+The Polar AccessLink API returns raw sensor data — thousands of individual heart rate readings, comma-separated sample strings with tens of thousands of values, and per-minute hypnogram entries. Passing this directly to an AI assistant would consume most of the context window on a single tool call, leaving little room for conversation or multi-tool workflows.
+
+This server preprocesses raw data into compact, meaningful summaries before it reaches the AI:
+
+| Raw API Data | Preprocessed Output |
+|---|---|
+| ~5,000 comma-separated speed/distance values | Per-km pace splits with avg speed |
+| ~8,000 heart rate samples per day | 48 half-hourly buckets (avg/min/max) + daily stats |
+| Per-minute sleep hypnogram entries | Sleep architecture: cycle count, deep/REM distribution, time to first deep sleep |
+| Per-minute heart rate during sleep | Min, avg, nadir (rolling average), and trend slope (bpm/hr) |
+| Raw HRV and breathing samples | Min/max/trend statistics via linear regression |
+| Raw power samples | Avg, normalized power, max, and variability index |
+| Per-second altitude readings | Total ascent/descent + elevation range |
+
+The result is that a full day of activity, sleep, and heart rate data fits comfortably in a few hundred tokens instead of tens of thousands — making multi-day queries and cross-domain analysis practical within a single conversation.
 
 ## Tools
 
