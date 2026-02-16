@@ -43,8 +43,5 @@ export const ENDPOINTS = {
 } as const;
 
 export const DEFAULT_TIMEOUT = 30000; // 30 seconds
-export const DEFAULT_LIMIT = 20;
-export const MAX_LIMIT = 100;
-export const MIN_LIMIT = 1;
 
 export const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;

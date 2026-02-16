@@ -43,9 +43,7 @@ for (const [, toolDef] of Object.entries(allTools)) {
     toolDef.annotations,
     async (args: Record<string, unknown>) => {
       try {
-        // Parse and validate input (use parseSchema with refinements if available)
-        const parseWith = ("parseSchema" in toolDef && toolDef.parseSchema) ? toolDef.parseSchema : toolDef.inputSchema;
-        const parsed = parseWith.parse(args);
+        const parsed = toolDef.inputSchema.parse(args);
         const result = await toolDef.handler(parsed as never);
 
         return {

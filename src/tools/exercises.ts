@@ -2,7 +2,7 @@ import { z } from "zod";
 import { writeFile } from "node:fs/promises";
 import { getApiClient } from "../services/api-client.js";
 import { ENDPOINTS } from "../constants.js";
-import { schemas, getExercisesSchema, downloadExerciseSchema } from "../schemas/input.js";
+import { schemas } from "../schemas/input.js";
 import { preprocessSamples } from "../services/exercise-preprocessor.js";
 import type {
   Exercise,
@@ -280,42 +280,20 @@ function formatResponse<T>(
 
 // --- Tool handlers ---
 
-type GetExercisesInput = z.infer<typeof getExercisesSchema>;
+type GetExercisesInput = z.infer<typeof schemas.getExercises>;
 
 export async function getExercises(input: GetExercisesInput): Promise<string> {
   const client = getApiClient();
   const samplesParam = input.samples;
 
-  if (input.exerciseId) {
-    // Single exercise by ID
-    const params: Record<string, unknown> = { zones: true, samples: samplesParam, route: false };
-    const raw = await client.get<Exercise>(
-      ENDPOINTS.EXERCISE(input.exerciseId),
-      params
-    );
-
-    const processed = processExercise(raw, samplesParam);
-
-    return formatResponse(processed, input.format, (data) => {
-      return "## Exercise Details\n\n" + formatExerciseDetailed(data);
-    });
-  }
-
   // List exercises
   const params: Record<string, unknown> = { zones: true, samples: samplesParam, route: false };
   const raw = await client.get<Exercise[]>(ENDPOINTS.EXERCISES, params);
 
+  // Client-side date range filter
   let exercises = raw;
-
-  // Client-side date filter
-  if (input.date) {
-    exercises = exercises.filter((e) => e.start_time.startsWith(input.date!));
-  }
-
-  // Client-side pagination
-  const offset = input.offset ?? 0;
-  const limit = input.limit ?? 20;
-  exercises = exercises.slice(offset, offset + limit);
+  if (input.from) exercises = exercises.filter((e) => e.start_time.split("T")[0] >= input.from!);
+  if (input.to) exercises = exercises.filter((e) => e.start_time.split("T")[0] <= input.to!);
 
   const processed = exercises.map((e) => processExercise(e, samplesParam));
 
@@ -348,12 +326,14 @@ export async function getExercises(input: GetExercisesInput): Promise<string> {
   });
 }
 
-type DownloadExerciseInput = z.infer<typeof downloadExerciseSchema>;
+type DownloadExerciseInput = z.infer<typeof schemas.downloadExercise>;
 
 export async function downloadExercise(input: DownloadExerciseInput): Promise<string> {
   const client = getApiClient();
 
-  const ext = input.filePath.match(/\.(fit|tcx|gpx)$/i)![1].toLowerCase();
+  const extMatch = input.filePath.match(/\.(fit|tcx|gpx)$/i);
+  if (!extMatch) throw new Error("filePath must end in .fit, .tcx, or .gpx");
+  const ext = extMatch[1].toLowerCase();
 
   let endpoint: string;
   switch (ext) {
@@ -393,9 +373,8 @@ export async function downloadExercise(input: DownloadExerciseInput): Promise<st
 export const exerciseTools = {
   polar_get_exercises: {
     name: "polar_get_exercises",
-    description: "Get exercises from the last 30 days. Optionally fetch a single exercise by ID, filter by date, or include preprocessed sample metrics (heart rate stats, speed splits, power, altitude, etc.). Always returns heart rate zones and training load data.",
+    description: "Get exercises from the last 30 days. Optionally filter by date range or include preprocessed sample metrics (heart rate stats, speed splits, power, altitude, etc.). Always returns heart rate zones and training load data.",
     inputSchema: schemas.getExercises,
-    parseSchema: getExercisesSchema,
     handler: getExercises,
     annotations: {
       title: "Get Exercises",
@@ -409,7 +388,6 @@ export const exerciseTools = {
     name: "polar_download_exercise",
     description: "Download exercise data to a file in FIT, TCX, or GPX format. The format is determined by the file extension. GPX is only available for exercises with GPS data.",
     inputSchema: schemas.downloadExercise,
-    parseSchema: downloadExerciseSchema,
     handler: downloadExercise,
     annotations: {
       title: "Download Exercise",

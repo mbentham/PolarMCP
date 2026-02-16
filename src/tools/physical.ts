@@ -11,8 +11,12 @@ import type {
   ProcessedHeartRate,
   Sleep,
   SleepList,
+  SleepHeartRateStats,
+  SleepArchitecture,
+  ProcessedSleep,
   NightlyRecharge,
   NightlyRechargeList,
+  ProcessedNightlyRecharge,
   CardioLoad,
   ResponseFormat,
 } from "../types.js";
@@ -149,83 +153,319 @@ function formatProcessedHeartRateMarkdown(data: ProcessedHeartRate[]): string {
   return lines.join("\n");
 }
 
-// Sleep formatters
-function formatSleepMarkdown(sleep: Sleep): string {
-  const lines = [
-    `### Sleep: ${sleep.date}`,
-    "",
-    `- **Date**: ${sleep.date}`,
-    `- **Sleep Start**: ${sleep.sleep_start_time}`,
-    `- **Sleep End**: ${sleep.sleep_end_time}`,
-  ];
+// Sleep preprocessing
 
-  if (sleep.sleep_score) lines.push(`- **Sleep Score**: ${sleep.sleep_score}`);
-  if (sleep.sleep_rating) lines.push(`- **Sleep Rating**: ${sleep.sleep_rating}/5`);
-  if (sleep.continuity) lines.push(`- **Continuity**: ${sleep.continuity}`);
-  if (sleep.light_sleep) lines.push(`- **Light Sleep**: ${Math.round(sleep.light_sleep / 60)} min`);
-  if (sleep.deep_sleep) lines.push(`- **Deep Sleep**: ${Math.round(sleep.deep_sleep / 60)} min`);
-  if (sleep.rem_sleep) lines.push(`- **REM Sleep**: ${Math.round(sleep.rem_sleep / 60)} min`);
-  if (sleep.sleep_cycles) lines.push(`- **Sleep Cycles**: ${sleep.sleep_cycles}`);
-  if (sleep.total_interruption_duration) {
-    lines.push(`- **Total Interruptions**: ${Math.round(sleep.total_interruption_duration / 60)} min`);
-  }
-
-  return lines.join("\n");
+/** Midnight-aware time parsing: times before ~18:00 are treated as next day when sleep starts in the evening */
+function parseSleepTime(timeStr: string, sleepStartHour: number): number {
+  const [h, m] = timeStr.split(":").map(Number);
+  let minutes = h * 60 + m;
+  if (sleepStartHour >= 18 && h < 18) minutes += 1440;
+  return minutes;
 }
 
-function formatSleepListMarkdown(data: SleepList): string {
-  if (!data.nights || data.nights.length === 0) {
+/** Linear regression slope in units/hour over midnight-aware time samples */
+function computeTrendSlope(samples: Record<string, number>, sleepStartHour: number): number {
+  const entries = Object.entries(samples);
+  const values = entries.map(([, v]) => v);
+  const timePoints = entries.map(([k]) => parseSleepTime(k, sleepStartHour));
+  const firstTime = timePoints[0];
+  const xHours = timePoints.map((t) => (t - firstTime) / 60);
+
+  const n = values.length;
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  for (let i = 0; i < n; i++) {
+    sumX += xHours[i];
+    sumY += values[i];
+    sumXY += xHours[i] * values[i];
+    sumX2 += xHours[i] * xHours[i];
+  }
+  const denom = n * sumX2 - sumX * sumX;
+  return denom === 0 ? 0 : Math.round(((n * sumXY - sumX * sumY) / denom) * 100) / 100;
+}
+
+function computeSleepHrStats(samples: Record<string, number>, sleepStartHour: number): SleepHeartRateStats {
+  const values = Object.values(samples);
+
+  const min = Math.min(...values);
+  const avg = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+
+  // Nadir: minimum of 3-point rolling average
+  let nadir: number;
+  if (values.length < 3) {
+    nadir = min;
+  } else {
+    nadir = Infinity;
+    for (let i = 0; i <= values.length - 3; i++) {
+      const rollingAvg = (values[i] + values[i + 1] + values[i + 2]) / 3;
+      if (rollingAvg < nadir) nadir = rollingAvg;
+    }
+    nadir = Math.round(nadir);
+  }
+
+  const trend_slope = computeTrendSlope(samples, sleepStartHour);
+
+  return { min, avg, nadir, trend_slope };
+}
+
+function computeSleepArchitecture(hypnogram: Record<string, number>, sleep: Sleep, sleepStartHour: number): SleepArchitecture {
+  // Sort entries by midnight-aware time
+  const entries = Object.entries(hypnogram)
+    .map(([time, stage]) => ({ time, stage, minutes: parseSleepTime(time, sleepStartHour) }))
+    .sort((a, b) => a.minutes - b.minutes);
+
+  // Compute segments with durations
+  const segments: { stage: number; start: number; duration: number }[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const start = entries[i].minutes;
+    const end = i < entries.length - 1 ? entries[i + 1].minutes : start;
+    segments.push({ stage: entries[i].stage, start, duration: end - start });
+  }
+
+  const sleepStart = entries[0].minutes;
+  const sleepEnd = entries[entries.length - 1].minutes;
+  const totalDuration = sleepEnd - sleepStart;
+  const midpoint = sleepStart + totalDuration / 2;
+
+  // Time to first deep sleep (stage 4)
+  const firstDeep = segments.find((s) => s.stage === 4);
+  const time_to_first_deep_sleep_min = firstDeep
+    ? Math.round(firstDeep.start - sleepStart)
+    : 0;
+
+  // Number of REM cycles: transitions into stage 1 from non-1
+  let number_of_rem_cycles = 0;
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i].stage === 1 && (i === 0 || segments[i - 1].stage !== 1)) {
+      number_of_rem_cycles++;
+    }
+  }
+
+  // Avg cycle length using API's sleep_cycles field, fallback to REM cycles
+  const cycleCount = sleep.sleep_cycles || number_of_rem_cycles;
+  const totalSleepSeconds = (sleep.light_sleep || 0) + (sleep.deep_sleep || 0) + (sleep.rem_sleep || 0);
+  const avg_cycle_length_min = cycleCount > 0
+    ? Math.round(totalSleepSeconds / 60 / cycleCount)
+    : 0;
+
+  // Deep sleep in first half
+  let firstHalfDeep = 0;
+  let totalDeep = 0;
+  for (const seg of segments) {
+    if (seg.stage === 4) {
+      totalDeep += seg.duration;
+      if (seg.start < midpoint) {
+        const effectiveEnd = Math.min(seg.start + seg.duration, midpoint);
+        firstHalfDeep += effectiveEnd - seg.start;
+      }
+    }
+  }
+  const deep_sleep_in_first_half_pct = totalDeep > 0
+    ? Math.round(firstHalfDeep / totalDeep * 100)
+    : 0;
+
+  // REM sleep in second half
+  let secondHalfRem = 0;
+  let totalRem = 0;
+  for (const seg of segments) {
+    if (seg.stage === 1) {
+      totalRem += seg.duration;
+      const segEnd = seg.start + seg.duration;
+      if (segEnd > midpoint) {
+        const effectiveStart = Math.max(seg.start, midpoint);
+        secondHalfRem += segEnd - effectiveStart;
+      }
+    }
+  }
+  const rem_sleep_in_second_half_pct = totalRem > 0
+    ? Math.round(secondHalfRem / totalRem * 100)
+    : 0;
+
+  return {
+    time_to_first_deep_sleep_min,
+    number_of_rem_cycles,
+    avg_cycle_length_min,
+    deep_sleep_in_first_half_pct,
+    rem_sleep_in_second_half_pct,
+  };
+}
+
+function preprocessSleep(sleep: Sleep): ProcessedSleep {
+  const sleepStartHour = parseInt(sleep.sleep_start_time.split("T")[1]?.split(":")[0] || "22", 10);
+
+  const processed: ProcessedSleep = {
+    date: sleep.date,
+    sleep_start_time: sleep.sleep_start_time,
+    sleep_end_time: sleep.sleep_end_time,
+  };
+
+  // Copy scalar fields (omit polar_user, device_id, unrecognized_sleep_stage, sleep_goal)
+  if (sleep.continuity !== undefined) processed.continuity = sleep.continuity;
+  if (sleep.continuity_class !== undefined) processed.continuity_class = sleep.continuity_class;
+  if (sleep.light_sleep !== undefined) processed.light_sleep = sleep.light_sleep;
+  if (sleep.deep_sleep !== undefined) processed.deep_sleep = sleep.deep_sleep;
+  if (sleep.rem_sleep !== undefined) processed.rem_sleep = sleep.rem_sleep;
+  if (sleep.sleep_score !== undefined) processed.sleep_score = sleep.sleep_score;
+  if (sleep.total_interruption_duration !== undefined) processed.total_interruption_duration = sleep.total_interruption_duration;
+  if (sleep.sleep_charge !== undefined) processed.sleep_charge = sleep.sleep_charge;
+  if (sleep.sleep_rating !== undefined) processed.sleep_rating = sleep.sleep_rating;
+  if (sleep.short_interruption_duration !== undefined) processed.short_interruption_duration = sleep.short_interruption_duration;
+  if (sleep.long_interruption_duration !== undefined) processed.long_interruption_duration = sleep.long_interruption_duration;
+  if (sleep.sleep_cycles !== undefined) processed.sleep_cycles = sleep.sleep_cycles;
+  if (sleep.group_duration_score !== undefined) processed.group_duration_score = sleep.group_duration_score;
+  if (sleep.group_solidity_score !== undefined) processed.group_solidity_score = sleep.group_solidity_score;
+  if (sleep.group_regeneration_score !== undefined) processed.group_regeneration_score = sleep.group_regeneration_score;
+
+  // Preprocess heart rate samples
+  if (sleep.heart_rate_samples && Object.keys(sleep.heart_rate_samples).length > 0) {
+    processed.heart_rate = computeSleepHrStats(sleep.heart_rate_samples, sleepStartHour);
+  }
+
+  // Preprocess hypnogram into sleep architecture
+  if (sleep.hypnogram && Object.keys(sleep.hypnogram).length > 1) {
+    processed.sleep_architecture = computeSleepArchitecture(sleep.hypnogram, sleep, sleepStartHour);
+  }
+
+  return processed;
+}
+
+function formatProcessedSleepMarkdown(data: ProcessedSleep[]): string {
+  if (data.length === 0) {
     return "## Sleep Records\n\nNo sleep records found.";
   }
 
   const lines = [
     "## Sleep Records",
     "",
-    `Found ${data.nights.length} night(s) of data:`,
-    "",
+    `Found ${data.length} night(s) of data:`,
   ];
 
-  for (const sleep of data.nights) {
-    lines.push(formatSleepMarkdown(sleep));
+  for (const night of data) {
+    const startTime = night.sleep_start_time.split("T")[1]?.substring(0, 5) || night.sleep_start_time;
+    const endTime = night.sleep_end_time.split("T")[1]?.substring(0, 5) || night.sleep_end_time;
+
     lines.push("");
+    lines.push(`### ${night.date}`);
+
+    // Main line
+    const mainParts = [`**Sleep**: ${startTime} → ${endTime}`];
+    if (night.sleep_score !== undefined) mainParts.push(`**Score**: ${night.sleep_score}`);
+    if (night.sleep_cycles !== undefined) mainParts.push(`**Cycles**: ${night.sleep_cycles}`);
+    lines.push(`- ${mainParts.join(" | ")}`);
+
+    // Stage durations
+    const stageParts: string[] = [];
+    if (night.light_sleep !== undefined) stageParts.push(`**Light**: ${Math.round(night.light_sleep / 60)} min`);
+    if (night.deep_sleep !== undefined) stageParts.push(`**Deep**: ${Math.round(night.deep_sleep / 60)} min`);
+    if (night.rem_sleep !== undefined) stageParts.push(`**REM**: ${Math.round(night.rem_sleep / 60)} min`);
+    if (stageParts.length > 0) lines.push(`- ${stageParts.join(" | ")}`);
+
+    // Continuity & interruptions
+    const contParts: string[] = [];
+    if (night.continuity !== undefined) contParts.push(`**Continuity**: ${night.continuity}`);
+    if (night.total_interruption_duration !== undefined) contParts.push(`**Interruptions**: ${Math.round(night.total_interruption_duration / 60)} min`);
+    if (contParts.length > 0) lines.push(`- ${contParts.join(" | ")}`);
+
+    // Heart rate stats
+    if (night.heart_rate) {
+      const hr = night.heart_rate;
+      lines.push("");
+      lines.push(`**Heart Rate**: Avg ${hr.avg} bpm | Min ${hr.min} bpm | Nadir ${hr.nadir} bpm | Trend ${hr.trend_slope} bpm/hr`);
+    }
+
+    // Sleep architecture table
+    if (night.sleep_architecture) {
+      const arch = night.sleep_architecture;
+      lines.push("");
+      lines.push("**Sleep Architecture**");
+      lines.push("| Metric | Value |");
+      lines.push("|--------|-------|");
+      lines.push(`| Time to first deep sleep | ${arch.time_to_first_deep_sleep_min} min |`);
+      lines.push(`| REM cycles | ${arch.number_of_rem_cycles} |`);
+      lines.push(`| Avg cycle length | ${arch.avg_cycle_length_min} min |`);
+      lines.push(`| Deep sleep in first half | ${arch.deep_sleep_in_first_half_pct}% |`);
+      lines.push(`| REM in second half | ${arch.rem_sleep_in_second_half_pct}% |`);
+    }
   }
 
   return lines.join("\n");
 }
 
-// Nightly Recharge formatters
-function formatNightlyRechargeMarkdown(recharge: NightlyRecharge): string {
-  const lines = [
-    `### Nightly Recharge: ${recharge.date}`,
-    "",
-    `- **Date**: ${recharge.date}`,
-  ];
+// Nightly Recharge preprocessing
 
-  if (recharge.ans_charge !== undefined) lines.push(`- **ANS Charge**: ${recharge.ans_charge}`);
-  if (recharge["ans-charge-status"]) lines.push(`- **ANS Charge Status**: ${recharge["ans-charge-status"]}`);
-  if (recharge["hrv-rmssd"]) lines.push(`- **HRV RMSSD**: ${recharge["hrv-rmssd"]} ms`);
-  if (recharge["breathing-rate"]) lines.push(`- **Breathing Rate**: ${recharge["breathing-rate"]} breaths/min`);
-  if (recharge["heart-rate-avg"]) lines.push(`- **Avg Heart Rate**: ${recharge["heart-rate-avg"]} bpm`);
-  if (recharge["nightly-recharge-status"]) lines.push(`- **Recharge Status**: ${recharge["nightly-recharge-status"]}`);
-
-  return lines.join("\n");
+function computeSampleStats(samples: Record<string, number>, sleepStartHour: number): { min: number; max: number; trend_slope: number } {
+  const values = Object.values(samples);
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+    trend_slope: computeTrendSlope(samples, sleepStartHour),
+  };
 }
 
-function formatNightlyRechargeListMarkdown(data: NightlyRechargeList): string {
-  if (!data.recharges || data.recharges.length === 0) {
+function preprocessNightlyRecharge(recharge: NightlyRecharge): ProcessedNightlyRecharge {
+  const processed: ProcessedNightlyRecharge = { date: recharge.date };
+
+  if (recharge.nightly_recharge_status !== undefined) processed.nightly_recharge_status = recharge.nightly_recharge_status;
+  if (recharge.ans_charge !== undefined) processed.ans_charge = recharge.ans_charge;
+  if (recharge.ans_charge_status !== undefined) processed.ans_charge_status = recharge.ans_charge_status;
+  if (recharge.heart_rate_avg !== undefined) processed.heart_rate_avg = recharge.heart_rate_avg;
+  if (recharge.beat_to_beat_avg !== undefined) processed.beat_to_beat_avg = recharge.beat_to_beat_avg;
+
+  // Derive sleepStartHour from first sample key
+  const firstSampleKey = recharge.hrv_samples ? Object.keys(recharge.hrv_samples)[0]
+    : recharge.breathing_samples ? Object.keys(recharge.breathing_samples)[0]
+    : undefined;
+  const sleepStartHour = firstSampleKey ? parseInt(firstSampleKey.split(":")[0], 10) : 22;
+
+  if (recharge.heart_rate_variability_avg !== undefined && recharge.hrv_samples && Object.keys(recharge.hrv_samples).length > 0) {
+    const stats = computeSampleStats(recharge.hrv_samples, sleepStartHour);
+    processed.hrv = { avg: recharge.heart_rate_variability_avg, ...stats };
+  } else if (recharge.heart_rate_variability_avg !== undefined) {
+    processed.hrv = { avg: recharge.heart_rate_variability_avg, min: 0, max: 0, trend_slope: 0 };
+  }
+
+  if (recharge.breathing_rate_avg !== undefined && recharge.breathing_samples && Object.keys(recharge.breathing_samples).length > 0) {
+    const stats = computeSampleStats(recharge.breathing_samples, sleepStartHour);
+    processed.breathing_rate = { avg: recharge.breathing_rate_avg, ...stats };
+  } else if (recharge.breathing_rate_avg !== undefined) {
+    processed.breathing_rate = { avg: recharge.breathing_rate_avg, min: 0, max: 0, trend_slope: 0 };
+  }
+
+  return processed;
+}
+
+function formatProcessedRechargeMarkdown(data: ProcessedNightlyRecharge[]): string {
+  if (data.length === 0) {
     return "## Nightly Recharge\n\nNo recharge data found.";
   }
 
   const lines = [
     "## Nightly Recharge",
     "",
-    `Found ${data.recharges.length} night(s) of data:`,
-    "",
+    `Found ${data.length} night(s) of data:`,
   ];
 
-  for (const recharge of data.recharges) {
-    lines.push(formatNightlyRechargeMarkdown(recharge));
+  for (const night of data) {
     lines.push("");
+    lines.push(`### ${night.date}`);
+
+    const mainParts: string[] = [];
+    if (night.ans_charge !== undefined) mainParts.push(`**ANS Charge**: ${night.ans_charge}`);
+    if (night.ans_charge_status !== undefined) mainParts.push(`**Status**: ${night.ans_charge_status}`);
+    if (night.nightly_recharge_status !== undefined) mainParts.push(`**Recharge Status**: ${night.nightly_recharge_status}`);
+    if (mainParts.length > 0) lines.push(`- ${mainParts.join(" | ")}`);
+
+    const hrParts: string[] = [];
+    if (night.heart_rate_avg !== undefined) hrParts.push(`**Heart Rate**: Avg ${night.heart_rate_avg} bpm`);
+    if (night.beat_to_beat_avg !== undefined) hrParts.push(`**Beat-to-Beat**: Avg ${night.beat_to_beat_avg} ms`);
+    if (hrParts.length > 0) lines.push(`- ${hrParts.join(" | ")}`);
+
+    if (night.hrv) {
+      lines.push("");
+      lines.push(`**HRV**: Avg ${night.hrv.avg} ms | Min ${night.hrv.min} ms | Max ${night.hrv.max} ms | Trend ${night.hrv.trend_slope} ms/hr`);
+    }
+    if (night.breathing_rate) {
+      lines.push(`**Breathing**: Avg ${night.breathing_rate.avg} br/min | Min ${night.breathing_rate.min} br/min | Max ${night.breathing_rate.max} br/min | Trend ${night.breathing_rate.trend_slope} br/min/hr`);
+    }
   }
 
   return lines.join("\n");
@@ -235,10 +475,7 @@ function formatNightlyRechargeListMarkdown(data: NightlyRechargeList): string {
 export async function listPhysicalInfo(input: z.infer<typeof schemas.listPhysicalInfo>): Promise<string> {
   const client = getApiClient();
 
-  const result = await client.get<PhysicalInfoList>(ENDPOINTS.PHYSICAL_INFO, {
-    limit: input.limit,
-    offset: input.offset,
-  });
+  const result = await client.get<PhysicalInfoList>(ENDPOINTS.PHYSICAL_INFO);
 
   return formatResponse(result, input.format, formatPhysicalInfoListMarkdown);
 }
@@ -274,48 +511,34 @@ export async function getHeartRate(input: z.infer<typeof schemas.getHeartRate>):
   return formatResponse(processed, input.format, formatProcessedHeartRateMarkdown);
 }
 
-// Sleep handlers
+// Sleep handler
 export async function listSleep(input: z.infer<typeof schemas.listSleep>): Promise<string> {
   const client = getApiClient();
 
-  const result = await client.get<SleepList>(ENDPOINTS.SLEEP, {
-    limit: input.limit,
-    offset: input.offset,
-  });
+  const result = await client.get<SleepList>(ENDPOINTS.SLEEP);
 
-  return formatResponse(result, input.format, formatSleepListMarkdown);
+  let nights = result.nights || [];
+  if (input.from) nights = nights.filter((n) => n.date >= input.from!);
+  if (input.to) nights = nights.filter((n) => n.date <= input.to!);
+
+  const processed = nights.map(preprocessSleep);
+
+  return formatResponse(processed, input.format, formatProcessedSleepMarkdown);
 }
 
-export async function getSleep(input: z.infer<typeof schemas.getSleep>): Promise<string> {
-  const client = getApiClient();
-
-  const result = await client.get<Sleep>(ENDPOINTS.SLEEP_NIGHT(input.nightId));
-
-  return formatResponse(result, input.format, (data) => {
-    return "## Sleep Details\n\n" + formatSleepMarkdown(data);
-  });
-}
-
-// Nightly Recharge handlers
+// Nightly Recharge handler
 export async function listNightlyRecharge(input: z.infer<typeof schemas.listNightlyRecharge>): Promise<string> {
   const client = getApiClient();
 
-  const result = await client.get<NightlyRechargeList>(ENDPOINTS.NIGHTLY_RECHARGE, {
-    limit: input.limit,
-    offset: input.offset,
-  });
+  const result = await client.get<NightlyRechargeList>(ENDPOINTS.NIGHTLY_RECHARGE);
 
-  return formatResponse(result, input.format, formatNightlyRechargeListMarkdown);
-}
+  let recharges = result.recharges || [];
+  if (input.from) recharges = recharges.filter((r) => r.date >= input.from!);
+  if (input.to) recharges = recharges.filter((r) => r.date <= input.to!);
 
-export async function getNightlyRecharge(input: z.infer<typeof schemas.getNightlyRecharge>): Promise<string> {
-  const client = getApiClient();
+  const processed = recharges.map(preprocessNightlyRecharge);
 
-  const result = await client.get<NightlyRecharge>(ENDPOINTS.NIGHTLY_RECHARGE_NIGHT(input.nightId));
-
-  return formatResponse(result, input.format, (data) => {
-    return "## Nightly Recharge Details\n\n" + formatNightlyRechargeMarkdown(data);
-  });
+  return formatResponse(processed, input.format, formatProcessedRechargeMarkdown);
 }
 
 // Cardio Load formatters
@@ -411,24 +634,11 @@ export const heartRateTools = {
 export const sleepTools = {
   polar_list_sleep: {
     name: "polar_list_sleep",
-    description: "List sleep records including sleep score, duration, and sleep stages (light, deep, REM).",
+    description: "List sleep records including sleep score, duration, and sleep stages (light, deep, REM). Always returns heart rate stats and sleep architecture summary from preprocessed hypnogram and heart rate samples.",
     inputSchema: schemas.listSleep,
     handler: listSleep,
     annotations: {
       title: "List Sleep",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  polar_get_sleep: {
-    name: "polar_get_sleep",
-    description: "Get detailed sleep data for a specific night including sleep stages, hypnogram, and heart rate samples.",
-    inputSchema: schemas.getSleep,
-    handler: getSleep,
-    annotations: {
-      title: "Get Sleep",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -440,24 +650,11 @@ export const sleepTools = {
 export const nightlyRechargeTools = {
   polar_list_nightly_recharge: {
     name: "polar_list_nightly_recharge",
-    description: "List nightly recharge data including ANS charge, HRV, and recovery metrics.",
+    description: "List nightly recharge data including ANS charge, HRV, and recovery metrics. Always returns preprocessed sample data (heart rate stats, HRV min/max/trend, breathing rate min/max/trend) positioned alongside existing API averages.",
     inputSchema: schemas.listNightlyRecharge,
     handler: listNightlyRecharge,
     annotations: {
       title: "List Nightly Recharge",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  polar_get_nightly_recharge: {
-    name: "polar_get_nightly_recharge",
-    description: "Get detailed nightly recharge data for a specific night including HRV samples and breathing rate.",
-    inputSchema: schemas.getNightlyRecharge,
-    handler: getNightlyRecharge,
-    annotations: {
-      title: "Get Nightly Recharge",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

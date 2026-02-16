@@ -276,6 +276,45 @@ export interface ProcessedHeartRate {
   total_samples: number;
 }
 
+// Preprocessed sleep types
+export interface SleepHeartRateStats {
+  min: number;
+  avg: number;
+  nadir: number;        // min of 3-point rolling average (~15 min window)
+  trend_slope: number;  // linear regression bpm/hour
+}
+
+export interface SleepArchitecture {
+  time_to_first_deep_sleep_min: number;
+  number_of_rem_cycles: number;
+  avg_cycle_length_min: number;
+  deep_sleep_in_first_half_pct: number;
+  rem_sleep_in_second_half_pct: number;
+}
+
+export interface ProcessedSleep {
+  date: string;
+  sleep_start_time: string;
+  sleep_end_time: string;
+  continuity?: number;
+  continuity_class?: number;
+  light_sleep?: number;
+  deep_sleep?: number;
+  rem_sleep?: number;
+  sleep_score?: number;
+  total_interruption_duration?: number;
+  sleep_charge?: number;
+  sleep_rating?: number;
+  short_interruption_duration?: number;
+  long_interruption_duration?: number;
+  sleep_cycles?: number;
+  group_duration_score?: number;
+  group_solidity_score?: number;
+  group_regeneration_score?: number;
+  heart_rate?: SleepHeartRateStats;
+  sleep_architecture?: SleepArchitecture;
+}
+
 // Sleep types (API uses snake_case for this endpoint)
 export interface Sleep {
   polar_user: string;
@@ -310,32 +349,32 @@ export interface SleepList {
 
 // Nightly Recharge types
 export interface NightlyRecharge {
-  "polar-user": string;
+  polar_user: string;
   date: string;
-  "heart-rate-variability-samples"?: HrvSample[];
-  "breathing-samples"?: BreathingSample[];
+  heart_rate_avg?: number;
+  beat_to_beat_avg?: number;
+  heart_rate_variability_avg?: number;
+  breathing_rate_avg?: number;
+  nightly_recharge_status?: number;
   ans_charge?: number;
-  "ans-charge-status"?: number;
-  "hrv-rmssd"?: number;
-  "breathing-rate"?: number;
-  "beat-to-beat-avg"?: number;
-  "heart-rate-avg"?: number;
-  "heart-rate-variability-avg"?: number;
-  "nightly-recharge-status"?: number;
-}
-
-export interface HrvSample {
-  time: string;
-  "hrv-rmssd": number;
-}
-
-export interface BreathingSample {
-  time: string;
-  "breathing-rate": number;
+  ans_charge_status?: number;
+  hrv_samples?: Record<string, number>;
+  breathing_samples?: Record<string, number>;
 }
 
 export interface NightlyRechargeList {
   recharges: NightlyRecharge[];
+}
+
+export interface ProcessedNightlyRecharge {
+  date: string;
+  nightly_recharge_status?: number;
+  ans_charge?: number;
+  ans_charge_status?: number;
+  heart_rate_avg?: number;
+  beat_to_beat_avg?: number;
+  hrv?: { avg: number; min: number; max: number; trend_slope: number };
+  breathing_rate?: { avg: number; min: number; max: number; trend_slope: number };
 }
 
 // Cardio Load types
@@ -363,16 +402,4 @@ export type ResponseFormat = "markdown" | "json";
 // Tool input base type
 export interface BaseToolInput {
   format?: ResponseFormat;
-}
-
-// Pagination input type
-export interface PaginatedInput extends BaseToolInput {
-  limit?: number;
-  offset?: number;
-}
-
-// Date range input type
-export interface DateRangeInput extends PaginatedInput {
-  from?: string;
-  to?: string;
 }
