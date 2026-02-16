@@ -2,7 +2,8 @@ import { z } from "zod";
 import { getApiClient } from "../services/api-client.js";
 import { ENDPOINTS } from "../constants.js";
 import { schemas } from "../schemas/input.js";
-import type { PolarUser, ResponseFormat } from "../types.js";
+import type { PolarUser } from "../types.js";
+import { formatResponse } from "../utils/format.js";
 
 function formatUserMarkdown(user: PolarUser): string {
   const lines = [
@@ -28,13 +29,6 @@ function formatUserMarkdown(user: PolarUser): string {
   }
 
   return lines.join("\n");
-}
-
-function formatResponse<T>(data: T, format: ResponseFormat, markdownFormatter: (data: T) => string): string {
-  if (format === "json") {
-    return JSON.stringify(data, null, 2);
-  }
-  return markdownFormatter(data);
 }
 
 export async function registerUser(input: z.infer<typeof schemas.registerUser>): Promise<string> {

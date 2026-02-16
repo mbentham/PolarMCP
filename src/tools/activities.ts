@@ -132,30 +132,22 @@ function formatActivitiesMarkdown(activities: ProcessedActivity[]): string {
 }
 
 function generateDateRange(from?: string, to?: string): string[] {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const todayStr = new Date().toISOString().split("T")[0];
 
-  let startDate: Date;
-  let endDate: Date;
+  const startStr = from || (() => {
+    const d = new Date(todayStr + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() - 27); // 28 days including today
+    return d.toISOString().split("T")[0];
+  })();
 
-  if (from) {
-    startDate = new Date(from + "T00:00:00");
-  } else {
-    startDate = new Date(today);
-    startDate.setDate(startDate.getDate() - 27); // 28 days including today
-  }
-
-  if (to) {
-    endDate = new Date(to + "T00:00:00");
-  } else {
-    endDate = today;
-  }
+  const endStr = to || todayStr;
 
   const dates: string[] = [];
-  const current = new Date(startDate);
-  while (current <= endDate) {
+  const current = new Date(startStr + "T00:00:00Z");
+  const end = new Date(endStr + "T00:00:00Z");
+  while (current <= end) {
     dates.push(current.toISOString().split("T")[0]);
-    current.setDate(current.getDate() + 1);
+    current.setUTCDate(current.getUTCDate() + 1);
   }
   return dates;
 }
@@ -167,29 +159,35 @@ export async function getActivities(
 
   const dates = generateDateRange(input.from, input.to);
 
-  // Fetch summary + samples for each date in parallel
-  const results = await Promise.all(
-    dates.map(async (date) => {
-      let activity: DailyActivity | null = null;
-      let samples: ActivitySamples | null = null;
+  // Fetch summary + samples for each date with concurrency limit
+  const fetchDate = async (date: string): Promise<ProcessedActivity | null> => {
+    let activity: DailyActivity | null = null;
+    let samples: ActivitySamples | null = null;
 
-      try {
-        activity = await client.get<DailyActivity>(ENDPOINTS.ACTIVITY(date));
-      } catch {
-        return null; // No activity data for this date
-      }
+    try {
+      activity = await client.get<DailyActivity>(ENDPOINTS.ACTIVITY(date));
+    } catch {
+      return null; // No activity data for this date
+    }
 
-      try {
-        samples = await client.get<ActivitySamples>(
-          ENDPOINTS.ACTIVITY_SAMPLES_DATE(date)
-        );
-      } catch {
-        // Samples may not be available
-      }
+    try {
+      samples = await client.get<ActivitySamples>(
+        ENDPOINTS.ACTIVITY_SAMPLES_DATE(date)
+      );
+    } catch {
+      // Samples may not be available
+    }
 
-      return preprocessActivity(activity, samples);
-    })
-  );
+    return preprocessActivity(activity, samples);
+  };
+
+  const CONCURRENCY = 5;
+  const results: (ProcessedActivity | null)[] = [];
+  for (let i = 0; i < dates.length; i += CONCURRENCY) {
+    const batch = dates.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(batch.map(fetchDate));
+    results.push(...batchResults);
+  }
 
   const processed = results.filter((r): r is ProcessedActivity => r !== null);
 

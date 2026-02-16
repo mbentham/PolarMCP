@@ -1,7 +1,6 @@
 import type {
   ExerciseSample,
   PreprocessedSamples,
-  BasicStats,
   SpeedSplit,
   AltitudeStats,
   PowerStats,
@@ -24,44 +23,6 @@ function parseSampleData(data: string): (number | null)[] {
 
 function filterNulls(values: (number | null)[]): number[] {
   return values.filter((v): v is number => v !== null);
-}
-
-// --- Generic statistics ---
-
-function computeBasicStats(values: number[]): BasicStats | null {
-  if (values.length === 0) return null;
-
-  const sorted = [...values].sort((a, b) => a - b);
-  const n = sorted.length;
-
-  const sum = values.reduce((a, b) => a + b, 0);
-  const mean = sum / n;
-
-  const median =
-    n % 2 === 0
-      ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2
-      : sorted[Math.floor(n / 2)];
-
-  const variance = values.reduce((acc, v) => acc + (v - mean) ** 2, 0) / n;
-  const std_dev = Math.sqrt(variance);
-
-  const percentile = (p: number): number => {
-    const idx = (p / 100) * (n - 1);
-    const lower = Math.floor(idx);
-    const upper = Math.ceil(idx);
-    if (lower === upper) return sorted[lower];
-    return sorted[lower] + (sorted[upper] - sorted[lower]) * (idx - lower);
-  };
-
-  return {
-    min: sorted[0],
-    max: sorted[n - 1],
-    mean: round(mean),
-    median: round(median),
-    p5: round(percentile(5)),
-    p95: round(percentile(95)),
-    std_dev: round(std_dev),
-  };
 }
 
 function round(value: number, decimals = 2): number {

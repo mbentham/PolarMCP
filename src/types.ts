@@ -12,10 +12,6 @@ export interface PolarUser {
   extra_info?: Array<{ key: string; value: string }>;
 }
 
-export interface UserRegistration {
-  "member-id": string;
-}
-
 // Exercise types (Polar API v3 uses snake_case for most fields, kebab-case for some nested)
 export interface Exercise {
   id: string;
@@ -166,10 +162,6 @@ export interface DailyActivity {
   steps?: number;
   inactivity_alert_count?: number;
   distance_from_steps?: number;
-}
-
-export interface DailyActivityList {
-  activities: DailyActivity[];
 }
 
 export interface ActivitySamples {
@@ -444,7 +436,3 @@ export interface ProcessedSleepWiseAlertness {
 // Response format type
 export type ResponseFormat = "markdown" | "json";
 
-// Tool input base type
-export interface BaseToolInput {
-  format?: ResponseFormat;
-}

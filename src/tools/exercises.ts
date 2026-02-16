@@ -8,9 +8,9 @@ import type {
   Exercise,
   ProcessedExercise,
   HeartRateZone,
-  ResponseFormat,
   TrainingLoadPro,
 } from "../types.js";
+import { formatResponse } from "../utils/format.js";
 
 
 // --- ISO 8601 duration helper ---
@@ -265,17 +265,6 @@ function formatSampleOneLiner(exercise: ProcessedExercise): string {
   if (exercise.running_cadence) parts.push(`cad ${exercise.running_cadence.avg} spm`);
 
   return parts.length > 0 ? `Samples: ${parts.join(", ")}` : "";
-}
-
-function formatResponse<T>(
-  data: T,
-  format: ResponseFormat,
-  markdownFormatter: (data: T) => string
-): string {
-  if (format === "json") {
-    return JSON.stringify(data, null, 2);
-  }
-  return markdownFormatter(data);
 }
 
 // --- Tool handlers ---

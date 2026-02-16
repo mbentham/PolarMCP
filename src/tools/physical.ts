@@ -21,16 +21,8 @@ import type {
   CardioLoad,
   SleepWiseAlertness,
   ProcessedSleepWiseAlertness,
-  ResponseFormat,
 } from "../types.js";
-
-// Response formatter helper
-function formatResponse<T>(data: T, format: ResponseFormat, markdownFormatter: (data: T) => string): string {
-  if (format === "json") {
-    return JSON.stringify(data, null, 2);
-  }
-  return markdownFormatter(data);
-}
+import { formatResponse } from "../utils/format.js";
 
 // Physical Info formatters
 function formatPhysicalInfoMarkdown(info: PhysicalInfo): string {
@@ -615,14 +607,14 @@ export async function getCardioLoad(input: z.infer<typeof schemas.getCardioLoad>
 export const physicalInfoTools = {
   polar_list_physical_info: {
     name: "polar_list_physical_info",
-    description: "List physical information entries including weight, height, heart rate zones, and VO2 max.",
+    description: "List physical information entries including weight, height, heart rate zones, and VO2 max. Creates a temporary transaction to pull data (not committed, so data remains available for future pulls).",
     inputSchema: schemas.listPhysicalInfo,
     handler: listPhysicalInfo,
     annotations: {
       title: "List Physical Info",
-      readOnlyHint: true,
+      readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: true,
+      idempotentHint: false,
       openWorldHint: true,
     },
   },
@@ -760,8 +752,8 @@ export async function getSleepWise(input: z.infer<typeof schemas.getSleepWise>):
     // Alertness periods are keyed by sleep-start date (previous evening),
     // so shift 'from' back one day to capture the period whose alertness
     // covers the requested date.
-    const adjustedFrom = new Date(input.from + "T00:00:00");
-    adjustedFrom.setDate(adjustedFrom.getDate() - 1);
+    const adjustedFrom = new Date(input.from + "T00:00:00Z");
+    adjustedFrom.setUTCDate(adjustedFrom.getUTCDate() - 1);
     const fromStr = adjustedFrom.toISOString().slice(0, 10);
 
     raw = await client.get<unknown>(ENDPOINTS.SLEEPWISE_ALERTNESS_DATE, {
