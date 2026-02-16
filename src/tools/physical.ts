@@ -5,8 +5,10 @@ import { schemas } from "../schemas/input.js";
 import type {
   PhysicalInfo,
   PhysicalInfoList,
-  ContinuousHeartRate,
   ContinuousHeartRateList,
+  HeartRateSample,
+  HalfHourBucket,
+  ProcessedHeartRate,
   Sleep,
   SleepList,
   NightlyRecharge,
@@ -65,53 +67,83 @@ function formatPhysicalInfoListMarkdown(data: PhysicalInfoList): string {
   return lines.join("\n");
 }
 
-// Heart Rate formatters
-function formatHeartRateMarkdown(data: ContinuousHeartRate): string {
-  const lines = [
-    `### Heart Rate: ${data.date}`,
-    "",
-    `- **Date**: ${data.date}`,
-  ];
+// Heart Rate preprocessing
+function bucketHeartRateSamples(samples: HeartRateSample[]): HalfHourBucket[] {
+  // Accumulate into 48 buckets (0-47), each covering 30 minutes
+  const bucketSums: number[] = new Array(48).fill(0);
+  const bucketMins: number[] = new Array(48).fill(Infinity);
+  const bucketMaxs: number[] = new Array(48).fill(-Infinity);
+  const bucketCounts: number[] = new Array(48).fill(0);
 
-  if (data.heart_rate_samples && data.heart_rate_samples.length > 0) {
-    const samples = data.heart_rate_samples;
-    const heartRates = samples.map((s) => s.heart_rate);
-    const avg = Math.round(heartRates.reduce((a, b) => a + b, 0) / heartRates.length);
-    const min = Math.min(...heartRates);
-    const max = Math.max(...heartRates);
+  for (const sample of samples) {
+    const parts = sample.sample_time.split(":");
+    const hours = parseInt(parts[0], 10);
+    const minutes = parseInt(parts[1], 10);
+    const bucketIndex = hours * 2 + (minutes >= 30 ? 1 : 0);
 
-    lines.push(`- **Samples**: ${samples.length}`);
-    lines.push(`- **Average**: ${avg} bpm`);
-    lines.push(`- **Min**: ${min} bpm`);
-    lines.push(`- **Max**: ${max} bpm`);
-
-    // Show first and last sample times
-    const firstSample = samples[0];
-    const lastSample = samples[samples.length - 1];
-    lines.push(`- **First Sample**: ${firstSample.sample_time} (${firstSample.heart_rate} bpm)`);
-    lines.push(`- **Last Sample**: ${lastSample.sample_time} (${lastSample.heart_rate} bpm)`);
-  } else {
-    lines.push(`- **Samples**: No heart rate samples available`);
+    bucketSums[bucketIndex] += sample.heart_rate;
+    bucketCounts[bucketIndex]++;
+    if (sample.heart_rate < bucketMins[bucketIndex]) bucketMins[bucketIndex] = sample.heart_rate;
+    if (sample.heart_rate > bucketMaxs[bucketIndex]) bucketMaxs[bucketIndex] = sample.heart_rate;
   }
 
-  return lines.join("\n");
+  const buckets: HalfHourBucket[] = [];
+  for (let i = 0; i < 48; i++) {
+    if (bucketCounts[i] === 0) continue;
+    // Label = end of the 30-min window
+    const labelMinutesTotal = (i + 1) * 30;
+    const labelHours = Math.floor(labelMinutesTotal / 60);
+    const labelMins = labelMinutesTotal % 60;
+    const label = `${String(labelHours).padStart(2, "0")}:${String(labelMins).padStart(2, "0")}`;
+
+    buckets.push({
+      time: label,
+      avg: Math.round(bucketSums[i] / bucketCounts[i]),
+      min: bucketMins[i],
+      max: bucketMaxs[i],
+      samples: bucketCounts[i],
+    });
+  }
+
+  return buckets;
 }
 
-function formatHeartRateListMarkdown(data: ContinuousHeartRateList): string {
-  if (!data.continuous_heart_rate || data.continuous_heart_rate.length === 0) {
+function preprocessHeartRate(date: string, samples: HeartRateSample[]): ProcessedHeartRate {
+  const buckets = bucketHeartRateSamples(samples);
+  const heartRates = samples.map((s) => s.heart_rate);
+  const dailyAvg = Math.round(heartRates.reduce((a, b) => a + b, 0) / heartRates.length);
+
+  return {
+    date,
+    buckets,
+    daily_avg: dailyAvg,
+    daily_min: Math.min(...heartRates),
+    daily_max: Math.max(...heartRates),
+    total_samples: samples.length,
+  };
+}
+
+function formatProcessedHeartRateMarkdown(data: ProcessedHeartRate[]): string {
+  if (data.length === 0) {
     return "## Continuous Heart Rate\n\nNo heart rate data found.";
   }
 
   const lines = [
     "## Continuous Heart Rate",
     "",
-    `Found ${data.continuous_heart_rate.length} day(s) of data:`,
-    "",
+    `Found ${data.length} day(s) of data:`,
   ];
 
-  for (const hr of data.continuous_heart_rate) {
-    lines.push(formatHeartRateMarkdown(hr));
+  for (const day of data) {
     lines.push("");
+    lines.push(`### ${day.date}`);
+    lines.push(`- **Samples**: ${day.total_samples} | **Avg**: ${day.daily_avg} bpm | **Min**: ${day.daily_min} bpm | **Max**: ${day.daily_max} bpm`);
+    lines.push("");
+    lines.push("| Time  | Avg | Min | Max | Samples |");
+    lines.push("|-------|-----|-----|-----|---------|");
+    for (const bucket of day.buckets) {
+      lines.push(`| ${bucket.time} | ${bucket.avg} | ${bucket.min} | ${bucket.max} | ${bucket.samples} |`);
+    }
   }
 
   return lines.join("\n");
@@ -221,18 +253,8 @@ export async function getPhysicalInfo(input: z.infer<typeof schemas.getPhysicalI
   });
 }
 
-// Heart Rate handlers
+// Heart Rate handler
 export async function getHeartRate(input: z.infer<typeof schemas.getHeartRate>): Promise<string> {
-  const client = getApiClient();
-
-  const result = await client.get<ContinuousHeartRate>(ENDPOINTS.HEART_RATE_DATE(input.date));
-
-  return formatResponse(result, input.format, (data) => {
-    return "## Heart Rate Details\n\n" + formatHeartRateMarkdown(data);
-  });
-}
-
-export async function listHeartRate(input: z.infer<typeof schemas.listHeartRate>): Promise<string> {
   const client = getApiClient();
 
   const result = await client.get<ContinuousHeartRateList>(ENDPOINTS.HEART_RATE, {
@@ -240,7 +262,16 @@ export async function listHeartRate(input: z.infer<typeof schemas.listHeartRate>
     to: input.to,
   });
 
-  return formatResponse(result, input.format, formatHeartRateListMarkdown);
+  const processed: ProcessedHeartRate[] = [];
+  if (result.heart_rates) {
+    for (const hr of result.heart_rates) {
+      if (hr.heart_rate_samples && hr.heart_rate_samples.length > 0) {
+        processed.push(preprocessHeartRate(hr.date, hr.heart_rate_samples));
+      }
+    }
+  }
+
+  return formatResponse(processed, input.format, formatProcessedHeartRateMarkdown);
 }
 
 // Sleep handlers
@@ -364,24 +395,11 @@ export const physicalInfoTools = {
 export const heartRateTools = {
   polar_get_heart_rate: {
     name: "polar_get_heart_rate",
-    description: "Get continuous heart rate data for a specific date including all samples throughout the day.",
+    description: "Get continuous heart rate data for a date range with preprocessed half-hourly buckets (avg/min/max). Always returns heart rate zone summaries and daily statistics.",
     inputSchema: schemas.getHeartRate,
     handler: getHeartRate,
     annotations: {
       title: "Get Heart Rate",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  polar_list_heart_rate: {
-    name: "polar_list_heart_rate",
-    description: "List continuous heart rate data for a date range. Provides daily summaries with average, min, and max values.",
-    inputSchema: schemas.listHeartRate,
-    handler: listHeartRate,
-    annotations: {
-      title: "List Heart Rate",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

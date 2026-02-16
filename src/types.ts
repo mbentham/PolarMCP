@@ -255,7 +255,25 @@ export interface HeartRateSample {
 }
 
 export interface ContinuousHeartRateList {
-  continuous_heart_rate: ContinuousHeartRate[];
+  heart_rates: ContinuousHeartRate[];
+}
+
+// Preprocessed heart rate types
+export interface HalfHourBucket {
+  time: string;    // "00:30", "01:00", ... "24:00" (end of 30-min window)
+  avg: number;
+  min: number;
+  max: number;
+  samples: number; // count of raw samples in bucket
+}
+
+export interface ProcessedHeartRate {
+  date: string;
+  buckets: HalfHourBucket[];
+  daily_avg: number;
+  daily_min: number;
+  daily_max: number;
+  total_samples: number;
 }
 
 // Sleep types (API uses snake_case for this endpoint)

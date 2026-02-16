@@ -104,11 +104,6 @@ export const getPhysicalInfoSchema = z.object({
 
 // Heart rate tool schemas
 export const getHeartRateSchema = z.object({
-  date: dateSchema.describe("Heart rate date (YYYY-MM-DD)"),
-  format: formatSchema,
-}).strict();
-
-export const listHeartRateSchema = z.object({
   from: dateSchema.describe("Start date (YYYY-MM-DD)"),
   to: dateSchema.describe("End date (YYYY-MM-DD)"),
   format: formatSchema,
@@ -166,7 +161,6 @@ export const schemas = {
   getPhysicalInfo: getPhysicalInfoSchema,
   // Heart rate
   getHeartRate: getHeartRateSchema,
-  listHeartRate: listHeartRateSchema,
   // Sleep
   listSleep: listSleepSchema,
   getSleep: getSleepSchema,
