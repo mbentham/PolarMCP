@@ -83,6 +83,13 @@ export const listNightlyRechargeSchema = baseInputSchema.extend({
   to: optionalDateSchema.describe("End date (YYYY-MM-DD). If omitted, returns up to today."),
 }).strict();
 
+// SleepWise tool schemas
+export const getSleepWiseSchema = z.object({
+  from: optionalDateSchema.describe("Start date (YYYY-MM-DD). If omitted, returns last 28 days."),
+  to: optionalDateSchema.describe("End date (YYYY-MM-DD). Required if 'from' is provided."),
+  format: formatSchema,
+}).strict();
+
 // Cardio load tool schemas
 export const getCardioLoadSchema = z.object({
   from: optionalDateSchema.describe("Start date (YYYY-MM-DD). If omitted, returns last 28 days."),
@@ -123,6 +130,8 @@ export const schemas = {
   listSleep: listSleepSchema,
   // Nightly recharge
   listNightlyRecharge: listNightlyRechargeSchema,
+  // SleepWise
+  getSleepWise: getSleepWiseSchema,
   // Cardio load
   getCardioLoad: getCardioLoadSchema,
   // OAuth

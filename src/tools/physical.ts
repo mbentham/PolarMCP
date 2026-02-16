@@ -18,6 +18,8 @@ import type {
   NightlyRechargeList,
   ProcessedNightlyRecharge,
   CardioLoad,
+  SleepWiseAlertness,
+  ProcessedSleepWiseAlertness,
   ResponseFormat,
 } from "../types.js";
 
@@ -671,6 +673,129 @@ export const cardioLoadTools = {
     handler: getCardioLoad,
     annotations: {
       title: "Get Cardio Load",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  },
+};
+
+// SleepWise preprocessing
+function processSleepWise(alertness: SleepWiseAlertness): ProcessedSleepWiseAlertness {
+  return {
+    grade: alertness.grade,
+    grade_type: alertness.grade_type,
+    grade_classification: alertness.grade_classification,
+    validity: alertness.validity,
+    sleep_inertia: alertness.sleep_inertia,
+    sleep_type: alertness.sleep_type,
+    period_start_time: alertness.period_start_time,
+    period_end_time: alertness.period_end_time,
+    sleep_period_start_time: alertness.sleep_period_start_time,
+    sleep_period_end_time: alertness.sleep_period_end_time,
+    hourly_data: alertness.hourly_data,
+  };
+}
+
+function formatSleepWiseMarkdown(data: ProcessedSleepWiseAlertness[]): string {
+  if (!data || data.length === 0) {
+    return "## SleepWise Alertness\n\nNo alertness data found.";
+  }
+
+  const lines = [
+    "## SleepWise Alertness",
+    "",
+    `Found ${data.length} alertness period(s):`,
+  ];
+
+  for (const period of data) {
+    lines.push("");
+    lines.push(`### ${period.period_start_time} → ${period.period_end_time}`);
+
+    const mainParts: string[] = [];
+    mainParts.push(`**Grade**: ${period.grade}`);
+    mainParts.push(`**Classification**: ${period.grade_classification}`);
+    mainParts.push(`**Type**: ${period.grade_type}`);
+    lines.push(`- ${mainParts.join(" | ")}`);
+
+    const detailParts: string[] = [];
+    detailParts.push(`**Validity**: ${period.validity}`);
+    detailParts.push(`**Sleep Inertia**: ${period.sleep_inertia}`);
+    detailParts.push(`**Sleep Type**: ${period.sleep_type}`);
+    lines.push(`- ${detailParts.join(" | ")}`);
+
+    lines.push(`- **Sleep Period**: ${period.sleep_period_start_time} → ${period.sleep_period_end_time}`);
+
+    if (period.hourly_data && period.hourly_data.length > 0) {
+      lines.push("");
+      lines.push("| Start | End | Alertness Level | Validity |");
+      lines.push("|-------|-----|-----------------|----------|");
+      for (const hour of period.hourly_data) {
+        lines.push(`| ${hour.start_time} | ${hour.end_time} | ${hour.alertness_level} | ${hour.validity} |`);
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+// SleepWise handler
+export async function getSleepWise(input: z.infer<typeof schemas.getSleepWise>): Promise<string> {
+  const client = getApiClient();
+
+  let raw: unknown;
+  if (input.from && input.to) {
+    // Alertness periods are keyed by sleep-start date (previous evening),
+    // so shift 'from' back one day to capture the period whose alertness
+    // covers the requested date.
+    const adjustedFrom = new Date(input.from + "T00:00:00");
+    adjustedFrom.setDate(adjustedFrom.getDate() - 1);
+    const fromStr = adjustedFrom.toISOString().slice(0, 10);
+
+    raw = await client.get<unknown>(ENDPOINTS.SLEEPWISE_ALERTNESS_DATE, {
+      from: fromStr,
+      to: input.to,
+    });
+  } else {
+    raw = await client.get<unknown>(ENDPOINTS.SLEEPWISE_ALERTNESS);
+  }
+
+  // API may return a bare array or an object wrapping one
+  let result: SleepWiseAlertness[];
+  if (Array.isArray(raw)) {
+    result = raw;
+  } else if (raw && typeof raw === "object") {
+    const values = Object.values(raw as Record<string, unknown>);
+    const arr = values.find(Array.isArray);
+    result = (arr ?? []) as SleepWiseAlertness[];
+  } else {
+    result = [];
+  }
+
+  let processed = result.map(processSleepWise);
+
+  // Trim hourly data to the requested date range
+  if (input.from && input.to) {
+    const rangeStart = input.from + "T00:00:00";
+    const rangeEnd = input.to + "T23:59:59";
+    processed = processed.map((p) => ({
+      ...p,
+      hourly_data: p.hourly_data.filter((h) => h.start_time >= rangeStart && h.start_time <= rangeEnd),
+    }));
+  }
+
+  return formatResponse(processed, input.format, formatSleepWiseMarkdown);
+}
+
+export const sleepWiseTools = {
+  polar_get_sleepwise: {
+    name: "polar_get_sleepwise",
+    description: "Get SleepWise alertness data with hourly breakdowns including alertness grade, classification, and sleep inertia. Returns last 28 days by default, or a custom date range.",
+    inputSchema: schemas.getSleepWise,
+    handler: getSleepWise,
+    annotations: {
+      title: "Get SleepWise Alertness",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

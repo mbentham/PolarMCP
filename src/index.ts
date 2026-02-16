@@ -12,6 +12,7 @@ import {
   sleepTools,
   nightlyRechargeTools,
   cardioLoadTools,
+  sleepWiseTools,
 } from "./tools/physical.js";
 import { oauthTools } from "./tools/oauth.js";
 
@@ -26,6 +27,7 @@ const allTools = {
   ...sleepTools,
   ...nightlyRechargeTools,
   ...cardioLoadTools,
+  ...sleepWiseTools,
 };
 
 // Create MCP server

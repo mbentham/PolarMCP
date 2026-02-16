@@ -40,6 +40,10 @@ export const ENDPOINTS = {
   // Cardio Load
   CARDIO_LOAD: "/v3/users/cardio-load",
   CARDIO_LOAD_DATE: "/v3/users/cardio-load/date",
+
+  // SleepWise
+  SLEEPWISE_ALERTNESS: "/v3/users/sleepwise/alertness",
+  SLEEPWISE_ALERTNESS_DATE: "/v3/users/sleepwise/alertness/date",
 } as const;
 
 export const DEFAULT_TIMEOUT = 30000; // 30 seconds

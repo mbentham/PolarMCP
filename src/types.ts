@@ -396,6 +396,45 @@ export interface CardioLoad {
   cardio_load_level?: CardioLoadLevel;
 }
 
+// SleepWise types
+export interface SleepWiseHourlyData {
+  validity: string;
+  alertness_level: string;
+  start_time: string;
+  end_time: string;
+}
+
+export interface SleepWiseAlertness {
+  grade: number;
+  grade_validity_seconds: number;
+  grade_type: string;
+  grade_classification: string;
+  validity: string;
+  sleep_inertia: string;
+  sleep_type: string;
+  result_type: string;
+  period_start_time: string;
+  period_end_time: string;
+  sleep_period_start_time: string;
+  sleep_period_end_time: string;
+  sleep_timezone_offset_minutes: number;
+  hourly_data: SleepWiseHourlyData[];
+}
+
+export interface ProcessedSleepWiseAlertness {
+  grade: number;
+  grade_type: string;
+  grade_classification: string;
+  validity: string;
+  sleep_inertia: string;
+  sleep_type: string;
+  period_start_time: string;
+  period_end_time: string;
+  sleep_period_start_time: string;
+  sleep_period_end_time: string;
+  hourly_data: SleepWiseHourlyData[];
+}
+
 // Response format type
 export type ResponseFormat = "markdown" | "json";
 
