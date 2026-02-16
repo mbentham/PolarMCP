@@ -2,217 +2,212 @@ import { z } from "zod";
 import { getApiClient } from "../services/api-client.js";
 import { ENDPOINTS } from "../constants.js";
 import { schemas } from "../schemas/input.js";
-import type { DailyActivity, DailyActivityList, ActivitySamples, ActivitySamplesList, ResponseFormat } from "../types.js";
+import type {
+  DailyActivity,
+  ActivitySamples,
+  StepSample,
+  ActivityZoneSample,
+  ProcessedActivity,
+  ZoneSummary,
+} from "../types.js";
 
-function formatActivityMarkdown(activity: DailyActivity): string {
-  // Extract date from start_time (format: "2026-02-03T00:00")
-  const date = activity.start_time?.split("T")[0] || "Unknown";
+function aggregateHourlySteps(samples: StepSample[]): { hour: number; steps: number }[] {
+  const buckets: Record<number, number> = {};
 
-  const lines = [
-    `### Activity: ${date}`,
-    "",
-    `- **Date**: ${date}`,
-    `- **Calories**: ${activity.calories} kcal`,
-  ];
+  for (const sample of samples) {
+    const hour = parseInt(sample.timestamp.split("T")[1].split(":")[0], 10);
+    buckets[hour] = (buckets[hour] || 0) + sample.steps;
+  }
 
-  if (activity.active_calories) lines.push(`- **Active Calories**: ${activity.active_calories} kcal`);
-  if (activity.steps) lines.push(`- **Steps**: ${activity.steps}`);
-  if (activity.active_duration) lines.push(`- **Active Duration**: ${activity.active_duration}`);
-  if (activity.inactive_duration) lines.push(`- **Inactive Duration**: ${activity.inactive_duration}`);
-  if (activity.daily_activity !== undefined) lines.push(`- **Daily Activity Goal**: ${activity.daily_activity.toFixed(1)}%`);
-  if (activity.distance_from_steps) lines.push(`- **Distance**: ${activity.distance_from_steps} m`);
-  if (activity.inactivity_alert_count !== undefined) lines.push(`- **Inactivity Alerts**: ${activity.inactivity_alert_count}`);
-
-  return lines.join("\n");
+  return Object.entries(buckets)
+    .map(([h, s]) => ({ hour: Number(h), steps: s }))
+    .filter((b) => b.steps > 0)
+    .sort((a, b) => a.hour - b.hour);
 }
 
-function formatActivityListMarkdown(data: DailyActivityList): string {
-  if (!data.activities || data.activities.length === 0) {
+function computeZoneDurations(samples: ActivityZoneSample[]): ZoneSummary {
+  const summary: ZoneSummary = {
+    sedentary_minutes: 0,
+    light_minutes: 0,
+    moderate_minutes: 0,
+    vigorous_minutes: 0,
+  };
+
+  const zoneMap: Record<string, keyof ZoneSummary> = {
+    SEDENTARY: "sedentary_minutes",
+    LIGHT: "light_minutes",
+    MODERATE: "moderate_minutes",
+    VIGOROUS: "vigorous_minutes",
+  };
+
+  for (let i = 0; i < samples.length - 1; i++) {
+    const zone = samples[i].zone;
+    const key = zoneMap[zone];
+    if (!key) continue; // skip SLEEP, NON_WEAR
+
+    const start = new Date(samples[i].timestamp).getTime();
+    const end = new Date(samples[i + 1].timestamp).getTime();
+    const minutes = (end - start) / 60000;
+
+    if (minutes > 0) {
+      summary[key] += minutes;
+    }
+  }
+
+  // Round to nearest integer
+  summary.sedentary_minutes = Math.round(summary.sedentary_minutes);
+  summary.light_minutes = Math.round(summary.light_minutes);
+  summary.moderate_minutes = Math.round(summary.moderate_minutes);
+  summary.vigorous_minutes = Math.round(summary.vigorous_minutes);
+
+  return summary;
+}
+
+function preprocessActivity(
+  activity: DailyActivity,
+  samples: ActivitySamples | null
+): ProcessedActivity {
+  const date = activity.start_time?.split("T")[0] || "Unknown";
+
+  const hourlySteps = samples?.steps?.samples
+    ? aggregateHourlySteps(samples.steps.samples)
+    : [];
+
+  const zoneSummary = samples?.activity_zones?.samples
+    ? computeZoneDurations(samples.activity_zones.samples)
+    : { sedentary_minutes: 0, light_minutes: 0, moderate_minutes: 0, vigorous_minutes: 0 };
+
+  return {
+    date,
+    active_duration: activity.active_duration || "PT0S",
+    inactive_duration: activity.inactive_duration || "PT0S",
+    calories: activity.calories,
+    active_calories: activity.active_calories || 0,
+    steps: activity.steps || 0,
+    distance_from_steps: activity.distance_from_steps || 0,
+    hourly_steps: hourlySteps,
+    zone_summary: zoneSummary,
+  };
+}
+
+function formatActivitiesMarkdown(activities: ProcessedActivity[]): string {
+  if (activities.length === 0) {
     return "## Daily Activities\n\nNo activities found.";
   }
 
   const lines = [
     "## Daily Activities",
     "",
-    `Found ${data.activities.length} activity record(s):`,
+    `Found ${activities.length} day(s):`,
     "",
   ];
 
-  for (const activity of data.activities) {
-    lines.push(formatActivityMarkdown(activity));
+  for (const a of activities) {
+    lines.push(`### ${a.date}`);
+    lines.push(
+      `- **Active**: ${a.active_duration} | **Inactive**: ${a.inactive_duration}`
+    );
+    lines.push(
+      `- **Calories**: ${a.calories} (active: ${a.active_calories}) | **Steps**: ${a.steps} | **Distance**: ${a.distance_from_steps}m`
+    );
+
+    if (a.hourly_steps.length > 0) {
+      lines.push("");
+      lines.push("| Hour | Steps |");
+      lines.push("|------|-------|");
+      for (const h of a.hourly_steps) {
+        lines.push(`| ${h.hour} | ${h.steps} |`);
+      }
+    }
+
+    const z = a.zone_summary;
+    lines.push("");
+    lines.push(
+      `**Zones**: Sedentary ${z.sedentary_minutes}min | Light ${z.light_minutes}min | Moderate ${z.moderate_minutes}min | Vigorous ${z.vigorous_minutes}min`
+    );
     lines.push("");
   }
 
   return lines.join("\n");
 }
 
-function formatActivitySamplesMarkdown(data: ActivitySamples): string {
-  const lines = [
-    `### Activity Samples: ${data.date}`,
-    "",
-    `- **Date**: ${data.date}`,
-  ];
+function generateDateRange(from?: string, to?: string): string[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
-  // Step samples
-  if (data.steps) {
-    lines.push(`- **Total Steps**: ${data.steps.total_steps}`);
-    lines.push(`- **Sample Interval**: ${data.steps.interval_ms / 1000}s`);
+  let startDate: Date;
+  let endDate: Date;
 
-    if (data.steps.samples && data.steps.samples.length > 0) {
-      lines.push("", "#### Step Samples (first 10)");
-      const sampleCount = Math.min(data.steps.samples.length, 10);
-      for (let i = 0; i < sampleCount; i++) {
-        const sample = data.steps.samples[i];
-        const time = sample.timestamp.split("T")[1] || sample.timestamp;
-        lines.push(`- **${time}**: ${sample.steps} steps`);
+  if (from) {
+    startDate = new Date(from + "T00:00:00");
+  } else {
+    startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - 27); // 28 days including today
+  }
+
+  if (to) {
+    endDate = new Date(to + "T00:00:00");
+  } else {
+    endDate = today;
+  }
+
+  const dates: string[] = [];
+  const current = new Date(startDate);
+  while (current <= endDate) {
+    dates.push(current.toISOString().split("T")[0]);
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
+}
+
+export async function getActivities(
+  input: z.infer<typeof schemas.getActivities>
+): Promise<string> {
+  const client = getApiClient();
+
+  const dates = generateDateRange(input.from, input.to);
+
+  // Fetch summary + samples for each date in parallel
+  const results = await Promise.all(
+    dates.map(async (date) => {
+      let activity: DailyActivity | null = null;
+      let samples: ActivitySamples | null = null;
+
+      try {
+        activity = await client.get<DailyActivity>(ENDPOINTS.ACTIVITY(date));
+      } catch {
+        return null; // No activity data for this date
       }
-      if (data.steps.samples.length > 10) {
-        lines.push(`- ... and ${data.steps.samples.length - 10} more samples`);
+
+      try {
+        samples = await client.get<ActivitySamples>(
+          ENDPOINTS.ACTIVITY_SAMPLES_DATE(date)
+        );
+      } catch {
+        // Samples may not be available
       }
-    }
+
+      return preprocessActivity(activity, samples);
+    })
+  );
+
+  const processed = results.filter((r): r is ProcessedActivity => r !== null);
+
+  if (input.format === "json") {
+    return JSON.stringify(processed, null, 2);
   }
-
-  // Activity zones summary
-  if (data.activity_zones?.samples && data.activity_zones.samples.length > 0) {
-    lines.push("", "#### Activity Zones (first 10)");
-    const zoneCount = Math.min(data.activity_zones.samples.length, 10);
-    for (let i = 0; i < zoneCount; i++) {
-      const zone = data.activity_zones.samples[i];
-      const time = zone.timestamp.split("T")[1] || zone.timestamp;
-      lines.push(`- **${time}**: ${zone.zone}`);
-    }
-    if (data.activity_zones.samples.length > 10) {
-      lines.push(`- ... and ${data.activity_zones.samples.length - 10} more zones`);
-    }
-  }
-
-  // Inactivity stamps
-  if (data.inactivity_stamps?.samples && data.inactivity_stamps.samples.length > 0) {
-    lines.push("", "#### Inactivity Alerts");
-    for (const stamp of data.inactivity_stamps.samples) {
-      lines.push(`- ${stamp.stamp}`);
-    }
-  }
-
-  return lines.join("\n");
-}
-
-function formatActivitySamplesListMarkdown(data: ActivitySamplesList): string {
-  if (!data.samples || data.samples.length === 0) {
-    return "## Activity Samples\n\nNo activity samples found.";
-  }
-
-  const lines = [
-    "## Activity Samples",
-    "",
-    `Found ${data.samples.length} sample record(s):`,
-    "",
-  ];
-
-  for (const samples of data.samples) {
-    lines.push(formatActivitySamplesMarkdown(samples));
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
-
-function formatResponse<T>(data: T, format: ResponseFormat, markdownFormatter: (data: T) => string): string {
-  if (format === "json") {
-    return JSON.stringify(data, null, 2);
-  }
-  return markdownFormatter(data);
-}
-
-export async function listActivities(input: z.infer<typeof schemas.listActivities>): Promise<string> {
-  const client = getApiClient();
-
-  const result = await client.get<DailyActivityList>(ENDPOINTS.ACTIVITIES, {
-    limit: input.limit,
-    offset: input.offset,
-  });
-
-  return formatResponse(result, input.format, formatActivityListMarkdown);
-}
-
-export async function getActivity(input: z.infer<typeof schemas.getActivity>): Promise<string> {
-  const client = getApiClient();
-
-  const result = await client.get<DailyActivity>(ENDPOINTS.ACTIVITY(input.date));
-
-  return formatResponse(result, input.format, (data) => {
-    return "## Daily Activity Details\n\n" + formatActivityMarkdown(data);
-  });
-}
-
-export async function listActivitySamples(input: z.infer<typeof schemas.listActivitySamples>): Promise<string> {
-  const client = getApiClient();
-
-  const result = await client.get<ActivitySamplesList>(ENDPOINTS.ACTIVITY_SAMPLES, {
-    limit: input.limit,
-    offset: input.offset,
-  });
-
-  return formatResponse(result, input.format, formatActivitySamplesListMarkdown);
-}
-
-export async function getActivitySamples(input: z.infer<typeof schemas.getActivitySamples>): Promise<string> {
-  const client = getApiClient();
-
-  const result = await client.get<ActivitySamples>(ENDPOINTS.ACTIVITY_SAMPLES_DATE(input.date));
-
-  return formatResponse(result, input.format, (data) => {
-    return "## Activity Samples Details\n\n" + formatActivitySamplesMarkdown(data);
-  });
+  return formatActivitiesMarkdown(processed);
 }
 
 export const activityTools = {
-  polar_list_activities: {
-    name: "polar_list_activities",
-    description: "List daily activity summaries from the last 28 days. Returns daily calories, steps, and activity goals.",
-    inputSchema: schemas.listActivities,
-    handler: listActivities,
+  polar_get_activities: {
+    name: "polar_get_activities",
+    description:
+      "Get daily activity summaries from the last 28 days with preprocessed hourly step buckets and zone duration breakdowns. Optionally filter by date range.",
+    inputSchema: schemas.getActivities,
+    handler: getActivities,
     annotations: {
-      title: "List Activities",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  polar_get_activity: {
-    name: "polar_get_activity",
-    description: "Get daily activity summary for a specific date including calories burned, steps taken, and goal progress.",
-    inputSchema: schemas.getActivity,
-    handler: getActivity,
-    annotations: {
-      title: "Get Activity",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  polar_list_activity_samples: {
-    name: "polar_list_activity_samples",
-    description: "List activity sample data from the last 28 days. Returns time-series data with steps, calories, and activity levels.",
-    inputSchema: schemas.listActivitySamples,
-    handler: listActivitySamples,
-    annotations: {
-      title: "List Activity Samples",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  polar_get_activity_samples: {
-    name: "polar_get_activity_samples",
-    description: "Get activity sample data for a specific date. Returns detailed time-series data throughout the day.",
-    inputSchema: schemas.getActivitySamples,
-    handler: getActivitySamples,
-    annotations: {
-      title: "Get Activity Samples",
+      title: "Get Activities",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

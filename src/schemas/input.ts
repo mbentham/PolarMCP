@@ -64,29 +64,33 @@ export const deleteUserSchema = z.object({
 }).strict();
 
 // Exercise tool schemas
-export const listExercisesSchema = paginatedInputSchema.extend({}).strict();
-
-export const getExerciseSchema = z.object({
-  exerciseId: z.string().min(1).describe("The exercise ID"),
-  format: formatSchema,
+// Base schemas (ZodObject) used for .shape access in MCP tool registration
+export const getExercisesBaseSchema = paginatedInputSchema.extend({
+  exerciseId: z.string().min(1).optional().describe("If provided, fetch a single exercise by ID"),
+  date: z.string().regex(DATE_REGEX, "Date must be in YYYY-MM-DD format").optional().describe("If provided, filter exercises by date (YYYY-MM-DD)"),
+  samples: z.boolean().default(false).describe("Include preprocessed sample data (heart rate stats, speed splits, power metrics, etc.)"),
 }).strict();
 
-export const downloadExerciseFileSchema = z.object({
+// Refined schemas (ZodEffects) used for validation with cross-field constraints
+export const getExercisesSchema = getExercisesBaseSchema.refine(
+  (data) => !(data.exerciseId && data.date),
+  { message: "Cannot specify both exerciseId and date" }
+);
+
+export const downloadExerciseBaseSchema = z.object({
   exerciseId: z.string().min(1).describe("The exercise ID"),
+  filePath: z.string().min(1).describe("File path to save the exercise data (must end in .fit, .tcx, or .gpx)"),
 }).strict();
+
+export const downloadExerciseSchema = downloadExerciseBaseSchema.refine(
+  (data) => /\.(fit|tcx|gpx)$/i.test(data.filePath),
+  { message: "filePath must end in .fit, .tcx, or .gpx" }
+);
 
 // Activity tool schemas
-export const listActivitiesSchema = paginatedInputSchema.extend({}).strict();
-
-export const getActivitySchema = z.object({
-  date: dateSchema.describe("Activity date (YYYY-MM-DD)"),
-  format: formatSchema,
-}).strict();
-
-export const listActivitySamplesSchema = paginatedInputSchema.extend({}).strict();
-
-export const getActivitySamplesSchema = z.object({
-  date: dateSchema.describe("Activity samples date (YYYY-MM-DD)"),
+export const getActivitiesSchema = z.object({
+  from: optionalDateSchema.describe("Start date (YYYY-MM-DD). If omitted, returns last 28 days."),
+  to: optionalDateSchema.describe("End date (YYYY-MM-DD). If omitted, returns last 28 days."),
   format: formatSchema,
 }).strict();
 
@@ -126,6 +130,13 @@ export const getNightlyRechargeSchema = z.object({
   format: formatSchema,
 }).strict();
 
+// Cardio load tool schemas
+export const getCardioLoadSchema = z.object({
+  from: optionalDateSchema.describe("Start date (YYYY-MM-DD). If omitted, returns last 28 days."),
+  to: optionalDateSchema.describe("End date (YYYY-MM-DD). Required if 'from' is provided."),
+  format: formatSchema,
+}).strict();
+
 // OAuth tool schemas
 export const getAuthorizationUrlSchema = z.object({
   clientId: z.string().min(1).describe("Your Polar API client ID from https://admin.polaraccesslink.com/"),
@@ -145,17 +156,11 @@ export const schemas = {
   registerUser: registerUserSchema,
   getUser: getUserSchema,
   deleteUser: deleteUserSchema,
-  // Exercises
-  listExercises: listExercisesSchema,
-  getExercise: getExerciseSchema,
-  downloadExerciseFit: downloadExerciseFileSchema,
-  downloadExerciseTcx: downloadExerciseFileSchema,
-  downloadExerciseGpx: downloadExerciseFileSchema,
+  // Exercises (base schemas for .shape access)
+  getExercises: getExercisesBaseSchema,
+  downloadExercise: downloadExerciseBaseSchema,
   // Activities
-  listActivities: listActivitiesSchema,
-  getActivity: getActivitySchema,
-  listActivitySamples: listActivitySamplesSchema,
-  getActivitySamples: getActivitySamplesSchema,
+  getActivities: getActivitiesSchema,
   // Physical info
   listPhysicalInfo: listPhysicalInfoSchema,
   getPhysicalInfo: getPhysicalInfoSchema,
@@ -168,6 +173,8 @@ export const schemas = {
   // Nightly recharge
   listNightlyRecharge: listNightlyRechargeSchema,
   getNightlyRecharge: getNightlyRechargeSchema,
+  // Cardio load
+  getCardioLoad: getCardioLoadSchema,
   // OAuth
   getAuthorizationUrl: getAuthorizationUrlSchema,
   exchangeAuthorizationCode: exchangeAuthorizationCodeSchema,

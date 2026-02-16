@@ -11,6 +11,7 @@ import {
   heartRateTools,
   sleepTools,
   nightlyRechargeTools,
+  cardioLoadTools,
 } from "./tools/physical.js";
 import { oauthTools } from "./tools/oauth.js";
 
@@ -24,6 +25,7 @@ const allTools = {
   ...heartRateTools,
   ...sleepTools,
   ...nightlyRechargeTools,
+  ...cardioLoadTools,
 };
 
 // Create MCP server
@@ -41,8 +43,9 @@ for (const [, toolDef] of Object.entries(allTools)) {
     toolDef.annotations,
     async (args: Record<string, unknown>) => {
       try {
-        // Parse and validate input
-        const parsed = toolDef.inputSchema.parse(args);
+        // Parse and validate input (use parseSchema with refinements if available)
+        const parseWith = ("parseSchema" in toolDef && toolDef.parseSchema) ? toolDef.parseSchema : toolDef.inputSchema;
+        const parsed = parseWith.parse(args);
         const result = await toolDef.handler(parsed as never);
 
         return {

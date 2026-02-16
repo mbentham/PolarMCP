@@ -26,3 +26,6 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Misc References Docs
+Docs/

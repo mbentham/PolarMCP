@@ -36,6 +36,10 @@ export const ENDPOINTS = {
   // Nightly Recharge
   NIGHTLY_RECHARGE: "/v3/users/nightly-recharge",
   NIGHTLY_RECHARGE_NIGHT: (nightId: string) => `/v3/users/nightly-recharge/${nightId}`,
+
+  // Cardio Load
+  CARDIO_LOAD: "/v3/users/cardio-load",
+  CARDIO_LOAD_DATE: "/v3/users/cardio-load/date",
 } as const;
 
 export const DEFAULT_TIMEOUT = 30000; // 30 seconds

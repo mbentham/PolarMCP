@@ -11,6 +11,7 @@ import type {
   SleepList,
   NightlyRecharge,
   NightlyRechargeList,
+  CardioLoad,
   ResponseFormat,
 } from "../types.js";
 
@@ -286,6 +287,50 @@ export async function getNightlyRecharge(input: z.infer<typeof schemas.getNightl
   });
 }
 
+// Cardio Load formatters
+function formatCardioLoadListMarkdown(data: CardioLoad[]): string {
+  if (!data || data.length === 0) {
+    return "## Cardio Load\n\nNo cardio load data found.";
+  }
+
+  const lines = [
+    "## Cardio Load",
+    "",
+    `Found ${data.length} day(s) of data:`,
+    "",
+    "| Date | Status | Load | Strain | Tolerance | Ratio |",
+    "|------|--------|------|--------|-----------|-------|",
+  ];
+
+  for (const entry of data) {
+    const status = entry.cardio_load_status ?? "—";
+    const load = entry.cardio_load !== undefined ? entry.cardio_load.toFixed(1) : "—";
+    const strain = entry.strain !== undefined ? entry.strain.toFixed(1) : "—";
+    const tolerance = entry.tolerance !== undefined ? entry.tolerance.toFixed(1) : "—";
+    const ratio = entry.cardio_load_ratio !== undefined ? entry.cardio_load_ratio.toFixed(2) : "—";
+    lines.push(`| ${entry.date} | ${status} | ${load} | ${strain} | ${tolerance} | ${ratio} |`);
+  }
+
+  return lines.join("\n");
+}
+
+// Cardio Load handler
+export async function getCardioLoad(input: z.infer<typeof schemas.getCardioLoad>): Promise<string> {
+  const client = getApiClient();
+
+  let result: CardioLoad[];
+  if (input.from && input.to) {
+    result = await client.get<CardioLoad[]>(ENDPOINTS.CARDIO_LOAD_DATE, {
+      from: input.from,
+      to: input.to,
+    });
+  } else {
+    result = await client.get<CardioLoad[]>(ENDPOINTS.CARDIO_LOAD);
+  }
+
+  return formatResponse(result, input.format, formatCardioLoadListMarkdown);
+}
+
 // Export tool definitions
 export const physicalInfoTools = {
   polar_list_physical_info: {
@@ -395,6 +440,22 @@ export const nightlyRechargeTools = {
     handler: getNightlyRecharge,
     annotations: {
       title: "Get Nightly Recharge",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  },
+};
+
+export const cardioLoadTools = {
+  polar_get_cardio_load: {
+    name: "polar_get_cardio_load",
+    description: "Get daily cardio load metrics including strain, tolerance, load ratio, and load level thresholds. Returns last 28 days by default, or a custom date range.",
+    inputSchema: schemas.getCardioLoad,
+    handler: getCardioLoad,
+    annotations: {
+      title: "Get Cardio Load",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
