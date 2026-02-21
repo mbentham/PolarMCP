@@ -788,13 +788,18 @@ export async function getSleepWise(input: z.infer<typeof schemas.getSleepWise>):
     }));
   }
 
+  // Strip hourly data if not requested
+  if (!input.hourly) {
+    processed = processed.map(({ hourly_data, ...rest }) => ({ ...rest, hourly_data: [] }));
+  }
+
   return formatResponse(processed, input.format, formatSleepWiseMarkdown);
 }
 
 export const sleepWiseTools = {
   polar_get_sleepwise: {
     name: "polar_get_sleepwise",
-    description: "Get SleepWise alertness data with hourly breakdowns including alertness grade, classification, and sleep inertia. Returns last 28 days by default, or a custom date range.",
+    description: "Get SleepWise alertness data including alertness grade, classification, and sleep inertia. Returns last 28 days by default, or a custom date range. Set hourly=true to include hourly alertness breakdowns.",
     inputSchema: schemas.getSleepWise,
     handler: getSleepWise,
     annotations: {

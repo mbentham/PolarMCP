@@ -78,6 +78,7 @@ export const listNightlyRechargeSchema = baseInputSchema.extend({
 export const getSleepWiseSchema = z.object({
   from: optionalDateSchema.describe("Start date (YYYY-MM-DD). If omitted, returns last 28 days."),
   to: optionalDateSchema.describe("End date (YYYY-MM-DD). Required if 'from' is provided."),
+  hourly: z.boolean().default(false).describe("Include hourly alertness breakdowns (default false)"),
   format: formatSchema,
 }).strict();
 
